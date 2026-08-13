@@ -351,6 +351,8 @@ Tasks
 
 A detailed Entity Relationship Diagram will be created using Draw.io.
 
+![TaskMatrix MongoDB ERD](docs/taskmatrix-erd.png)
+
 ---
 
 # 🧠 Frontend State Architecture
@@ -373,7 +375,11 @@ Zustand
 └── UI Store
 ```
 
-The final state tree diagram will be included after the architecture phase.
+![TaskMatrix Frontend State Tree and API Architecture](docs/taskmatrix-frontend-architecture.png)
+
+### Mock API Endpoints
+
+The frontend architecture is designed around RESTful API endpoints for authentication, projects, sprints, tasks, comments, activity logs, and notifications.
 
 ---
 
