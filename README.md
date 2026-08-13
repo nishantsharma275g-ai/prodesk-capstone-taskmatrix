@@ -478,7 +478,7 @@ Additional screens may include:
 
 Figma URL:
 
-`Coming Soon`
+`https://www.figma.com/design/Fl5K12wHsa148slrXr9JPX/TaskMatrix-%E2%80%94-UI-UX-Design?node-id=5-8&t=Oywjqlpi9QSljyd3-1`
 
 ---
 
