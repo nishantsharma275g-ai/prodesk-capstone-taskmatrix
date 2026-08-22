@@ -37,14 +37,35 @@ export default function ProjectDetailsPage() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const [error, setError] = useState("");
+
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
+  // Create task state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
+
+  // Edit task state
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editPriority, setEditPriority] = useState<"low" | "medium" | "high">(
+    "medium",
+  );
+  const [editStatus, setEditStatus] = useState<"todo" | "in-progress" | "done">(
+    "todo",
+  );
+  const [editDueDate, setEditDueDate] = useState("");
+
+  // Delete confirmation state
+  const [deletingTask, setDeletingTask] = useState<Task | null>(null);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("taskmatrix_token");
@@ -178,6 +199,8 @@ export default function ProjectDetailsPage() {
     }
 
     try {
+      setError("");
+
       const response = await fetch(`${API_URL}/tasks/${taskId}`, {
         method: "PUT",
         headers: {
@@ -205,7 +228,33 @@ export default function ProjectDetailsPage() {
     }
   }
 
-  async function deleteTask(taskId: string) {
+  function openEditModal(task: Task) {
+    setEditingTask(task);
+    setEditTitle(task.title);
+    setEditDescription(task.description || "");
+    setEditPriority(task.priority);
+    setEditStatus(task.status);
+    setEditDueDate(
+      task.dueDate ? new Date(task.dueDate).toISOString().split("T")[0] : "",
+    );
+    setError("");
+  }
+
+  function closeEditModal() {
+    if (saving) {
+      return;
+    }
+
+    setEditingTask(null);
+  }
+
+  async function handleEditTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!editingTask) {
+      return;
+    }
+
     const token = localStorage.getItem("taskmatrix_token");
 
     if (!token) {
@@ -213,8 +262,90 @@ export default function ProjectDetailsPage() {
       return;
     }
 
+    if (!editTitle.trim()) {
+      setError("Task title is required.");
+      return;
+    }
+
     try {
-      const response = await fetch(`${API_URL}/tasks/${taskId}`, {
+      setSaving(true);
+      setError("");
+
+      const response = await fetch(`${API_URL}/tasks/${editingTask._id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          priority: editPriority,
+          status: editStatus,
+          dueDate: editDueDate || null,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Unable to update task.");
+      }
+
+      setTasks((current) =>
+        current.map((task) =>
+          task._id === editingTask._id ? data.task : task,
+        ),
+      );
+
+      setEditingTask(null);
+    } catch (error) {
+      console.error("Edit task error:", error);
+
+      setError(
+        error instanceof Error ? error.message : "Unable to update task.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openDeleteModal(task: Task) {
+    setDeleteError("");
+    setDeletingTask(task);
+  }
+
+  function closeDeleteModal() {
+    setDeletingTask(null);
+    setDeleteError("");
+  }
+
+  async function confirmDeleteTask() {
+    if (!deletingTask) {
+      return;
+    }
+
+    const token = localStorage.getItem("taskmatrix_token");
+
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    const taskToDelete = deletingTask;
+
+    // Optimistic UI:
+    // remove the task immediately before waiting for the API.
+    setTasks((current) =>
+      current.filter((task) => task._id !== taskToDelete._id),
+    );
+
+    setDeletingTask(null);
+    setDeleteError("");
+    setError("");
+
+    try {
+      const response = await fetch(`${API_URL}/tasks/${taskToDelete._id}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -226,11 +357,21 @@ export default function ProjectDetailsPage() {
       if (!response.ok) {
         throw new Error(data.message || "Unable to delete task.");
       }
-
-      setTasks((current) => current.filter((task) => task._id !== taskId));
     } catch (error) {
       console.error("Delete task error:", error);
 
+      // Roll back the optimistic update if the API fails.
+      setTasks((current) => {
+        if (current.some((task) => task._id === taskToDelete._id)) {
+          return current;
+        }
+
+        return [...current, taskToDelete];
+      });
+
+      setDeleteError(
+        error instanceof Error ? error.message : "Unable to delete task.",
+      );
       setError(
         error instanceof Error ? error.message : "Unable to delete task.",
       );
@@ -405,9 +546,16 @@ export default function ProjectDetailsPage() {
                           </p>
                         )}
 
+                        {task.dueDate && (
+                          <p className="mt-3 text-xs text-slate-500">
+                            Due {new Date(task.dueDate).toLocaleDateString()}
+                          </p>
+                        )}
+
                         <div className="mt-4 flex flex-wrap gap-2">
                           {column.key !== "todo" && (
                             <button
+                              type="button"
                               onClick={() =>
                                 updateTaskStatus(
                                   task._id,
@@ -424,6 +572,7 @@ export default function ProjectDetailsPage() {
 
                           {column.key !== "done" && (
                             <button
+                              type="button"
                               onClick={() =>
                                 updateTaskStatus(
                                   task._id,
@@ -439,7 +588,16 @@ export default function ProjectDetailsPage() {
                           )}
 
                           <button
-                            onClick={() => deleteTask(task._id)}
+                            type="button"
+                            onClick={() => openEditModal(task)}
+                            className="rounded-lg border border-blue-500/20 px-3 py-1.5 text-xs text-blue-400 transition hover:bg-blue-500/10"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openDeleteModal(task)}
                             className="ml-auto rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10"
                           >
                             Delete
@@ -460,6 +618,211 @@ export default function ProjectDetailsPage() {
           </div>
         )}
       </section>
+
+      {/* Edit Task Modal */}
+      {editingTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-task-title"
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id="edit-task-title" className="text-xl font-semibold">
+                  Edit task
+                </h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Update the task details and save your changes.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeEditModal}
+                disabled={saving}
+                aria-label="Close edit task modal"
+                className="rounded-lg px-3 py-2 text-slate-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleEditTask} className="mt-6 space-y-5">
+              <div>
+                <label
+                  htmlFor="edit-task-title"
+                  className="mb-2 block text-sm font-medium text-slate-200"
+                >
+                  Title
+                </label>
+
+                <input
+                  id="edit-task-title"
+                  value={editTitle}
+                  onChange={(event) => setEditTitle(event.target.value)}
+                  maxLength={150}
+                  required
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="edit-task-description"
+                  className="mb-2 block text-sm font-medium text-slate-200"
+                >
+                  Description
+                </label>
+
+                <textarea
+                  id="edit-task-description"
+                  value={editDescription}
+                  onChange={(event) => setEditDescription(event.target.value)}
+                  maxLength={1000}
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <label
+                    htmlFor="edit-task-priority"
+                    className="mb-2 block text-sm font-medium text-slate-200"
+                  >
+                    Priority
+                  </label>
+
+                  <select
+                    id="edit-task-priority"
+                    value={editPriority}
+                    onChange={(event) =>
+                      setEditPriority(
+                        event.target.value as "low" | "medium" | "high",
+                      )
+                    }
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-500"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="edit-task-status"
+                    className="mb-2 block text-sm font-medium text-slate-200"
+                  >
+                    Status
+                  </label>
+
+                  <select
+                    id="edit-task-status"
+                    value={editStatus}
+                    onChange={(event) =>
+                      setEditStatus(
+                        event.target.value as "todo" | "in-progress" | "done",
+                      )
+                    }
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-500"
+                  >
+                    <option value="todo">To Do</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="done">Done</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="edit-task-due-date"
+                    className="mb-2 block text-sm font-medium text-slate-200"
+                  >
+                    Due date
+                  </label>
+
+                  <input
+                    id="edit-task-due-date"
+                    type="date"
+                    value={editDueDate}
+                    onChange={(event) => setEditDueDate(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-white/10 pt-5">
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  disabled={saving}
+                  className="rounded-xl border border-white/10 px-5 py-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-task-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <h2 id="delete-task-title" className="text-xl font-semibold">
+              Delete task?
+            </h2>
+
+            <p className="mt-3 text-sm leading-6 text-slate-400">
+              Are you sure you want to delete{" "}
+              <span className="font-medium text-white">
+                "{deletingTask.title}"
+              </span>
+              ? This action cannot be undone.
+            </p>
+
+            {deleteError && (
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                className="rounded-xl border border-white/10 px-5 py-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmDeleteTask}
+                className="rounded-xl bg-red-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-red-500"
+              >
+                Delete task
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
